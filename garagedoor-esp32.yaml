@@ -16,11 +16,11 @@ logger:
 
 api:
   encryption:
-    key: "4cwE2b/C8l63Ar1DS1ehwUgIM8JCLebgmXsQVsDDK9M="
+    key: "asdfasdfasdfasdf"
 
 ota:
   platform: esphome
-  password: "481bf90381a1125488938130ae60c658"
+  password: "asdfasdfasdfasdf"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -29,7 +29,7 @@ wifi:
 
   ap:
     ssid: "garagedoor Fallback Hotspot"
-    password: "euPFQjFDwIiI"
+    password: "asdfasdfasdf"
 
 captive_portal:
 
