@@ -16,11 +16,11 @@ logger:
 
 api:
   encryption:
-    key: "blabla"
+    key: "4cwE2b/C8l63Ar1DS1ehwUgIM8JCLebgmXsQVsDDK9M="
 
 ota:
   platform: esphome
-  password: "blabla"
+  password: "481bf90381a1125488938130ae60c658"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -48,7 +48,7 @@ uart:
   # am UART ankommen, bevor man Wiring/Polarität weiter debuggt.
   #debug:
   #  direction: RX
-  # after:
+  #  after:
   #    timeout: 50ms
 
 output:

@@ -108,10 +108,10 @@ void GarageDoorComponent::handle_frame(const uint8_t *frame, uint8_t total_len) 
   uint8_t payload_len = frame[1] & 0x0F;
   const uint8_t *payload = frame + 2;
 
-  // Broadcast vom Antrieb (Zieladresse 0x00): das erste Nutzlastbyte ist das
-  // Statusbyte (z.B. 00 00 01 02 CA -> Status 0x02).
+  // Der Antrieb sendet je nach Firmware entweder nur [status] oder
+  // [0x01, status], wobei 0x01 der Broadcast-Befehl ist.
   // Rein passives Mitlesen, keine eigene Bus-Teilnahme nötig.
-  if (dest == 0x00 && payload_len == 1) {
+  if (dest == 0x00 && (payload_len == 1 || (payload_len >= 2 && payload[0] == 0x01))) {
     handle_broadcast_status(payload, payload_len);
     return;
   }
@@ -131,22 +131,40 @@ void GarageDoorComponent::handle_frame(const uint8_t *frame, uint8_t total_len) 
   }
 }
 
-void GarageDoorComponent::handle_broadcast_status(const uint8_t *payload, uint8_t) {
-  uint8_t status = payload[0];
+void GarageDoorComponent::handle_broadcast_status(const uint8_t *payload, uint8_t len) {
+  uint8_t status = (len == 1) ? payload[0] : payload[1];
 
   if (status & hoermann_broadcast_bit::ERROR) {
+    commanded_motion_ = hoermann_state_unknown;
     set_state(hoermann_state_error, "error");
   } else if (status & hoermann_broadcast_bit::MOVING_OPEN) {
+    commanded_motion_ = hoermann_state_opening;
     set_state(hoermann_state_opening, "opening");
   } else if (status & hoermann_broadcast_bit::MOVING_CLOSE) {
+    commanded_motion_ = hoermann_state_closing;
     set_state(hoermann_state_closing, "closing");
   } else if (status & hoermann_broadcast_bit::END_OPEN) {
+    commanded_motion_ = hoermann_state_unknown;
+    last_endpoint_ = hoermann_state_open;
     set_state(hoermann_state_open, "open");
   } else if (status & hoermann_broadcast_bit::END_CLOSED) {
+    commanded_motion_ = hoermann_state_unknown;
+    last_endpoint_ = hoermann_state_closed;
     set_state(hoermann_state_closed, "closed");
   } else {
-    // Weder Endlage Auf noch Zu, keine Bewegung -> irgendwo mittendrin stehengeblieben
-    set_state(hoermann_state_stopped, "stopped");
+    if (commanded_motion_ == hoermann_state_opening) {
+      set_state(hoermann_state_opening, "opening");
+    } else if (commanded_motion_ == hoermann_state_closing) {
+      set_state(hoermann_state_closing, "closing");
+    } else if (last_endpoint_ == hoermann_state_closed) {
+      commanded_motion_ = hoermann_state_opening;
+      set_state(hoermann_state_opening, "opening");
+    } else if (last_endpoint_ == hoermann_state_open) {
+      commanded_motion_ = hoermann_state_closing;
+      set_state(hoermann_state_closing, "closing");
+    } else {
+      set_state(hoermann_state_stopped, "stopped");
+    }
   }
 }
 
@@ -276,7 +294,9 @@ cover::CoverTraits GarageDoorCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_stop(true);
   traits.set_supports_position(false);  // nur Endlagen bekannt, keine echte Positionsmessung
-  traits.set_is_assumed_state(false);   // wir bekommen echtes Feedback vom Bus, kein Raten
+  // Bei einem Zwischenstopp kennen wir keine exakte Position. Dadurch sollen
+  // OPEN und CLOSE in Home Assistant immer verfügbar bleiben.
+  traits.set_is_assumed_state(true);
   return traits;
 }
 
@@ -330,25 +350,39 @@ static constexpr uint8_t STOP_IMPULSE_HOLD_TICKS = 1;
 
 void GarageDoorComponent::action_open() {
   ESP_LOGD(TAG, "action_open called");
+  commanded_motion_ = hoermann_state_opening;
   pending_action_ = hoermann_action_open;
   pending_action_ticks_ = IMPULSE_HOLD_TICKS;
 }
 
 void GarageDoorComponent::action_close() {
   ESP_LOGD(TAG, "action_close called");
+  commanded_motion_ = hoermann_state_closing;
   pending_action_ = hoermann_action_close;
   pending_action_ticks_ = IMPULSE_HOLD_TICKS;
 }
 
 void GarageDoorComponent::action_stop() {
   ESP_LOGD(TAG, "action_stop called");
-  if (actual_state_ != hoermann_state_opening && actual_state_ != hoermann_state_closing) {
+  const bool was_opening = actual_state_ == hoermann_state_opening || commanded_motion_ == hoermann_state_opening;
+  const bool was_closing = actual_state_ == hoermann_state_closing || commanded_motion_ == hoermann_state_closing;
+  const bool was_moving = was_opening || was_closing;
+  commanded_motion_ = hoermann_state_unknown;
+  last_endpoint_ = hoermann_state_unknown;
+  if (!was_moving) {
     pending_action_ = hoermann_action_none;
     pending_action_ticks_ = 0;
     ESP_LOGD(TAG, "Ignoring stop while door is not moving");
     return;
   }
-  pending_action_ = hoermann_action_stop;
+  // Dieses Gerät hält bei einem entgegengesetzten Fahrimpuls an: CLOSE
+  // während OPEN stoppt die Aufwärtsfahrt und umgekehrt. Der separate
+  // Folgeimpuls 0x1004 bleibt für den Impulse-Button verfügbar.
+  if (was_opening) {
+    pending_action_ = hoermann_action_close;
+  } else {
+    pending_action_ = hoermann_action_open;
+  }
   pending_action_ticks_ = STOP_IMPULSE_HOLD_TICKS;
 }
 
@@ -366,6 +400,8 @@ void GarageDoorComponent::action_toggle_light() {
 
 void GarageDoorComponent::action_emergency_stop() {
   ESP_LOGW(TAG, "action_emergency_stop called");
+  commanded_motion_ = hoermann_state_unknown;
+  last_endpoint_ = hoermann_state_unknown;
   pending_action_ = hoermann_action_emergency_stop;
   pending_action_ticks_ = STOP_IMPULSE_HOLD_TICKS;
 }

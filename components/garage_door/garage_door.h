@@ -168,6 +168,8 @@ class GarageDoorComponent : public Component, public uart::UARTDevice {
   uint8_t master_address_{0x80};
 
   hoermann_state_t actual_state_{hoermann_state_unknown};
+  hoermann_state_t commanded_motion_{hoermann_state_unknown};
+  hoermann_state_t last_endpoint_{hoermann_state_unknown};
   std::string actual_state_string_{"unknown"};
   hoermann_state_t last_published_state_{hoermann_state_unknown};
 
